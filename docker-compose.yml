@@ -6,6 +6,12 @@ services:
       - .env
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
     networks:
       - loantrack-net
 
@@ -19,7 +25,8 @@ services:
       - DB_HOST=db
       - DB_PORT=5432
     depends_on:
-      - db
+      db:
+        condition: service_healthy
     networks:
       - loantrack-net
 
