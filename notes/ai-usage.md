@@ -29,3 +29,15 @@ This document records the exact pair-engineering collaboration between the human
   - Grep verification proving zero DB drivers, connection strings, or credentials in frontend/ (Hard Rule 1 verified)
 - **Modifications / Decisions**:
   - Connection pool initialized lazily per gunicorn worker process to prevent shared socket file descriptor corruption across pre-fork workers.
+
+## Phase 2: Docker Packaging & Compose Orchestration (`feature/docker`)
+- **Generated**:
+  - `backend/Dockerfile` (multi-stage build, pinned `python:3.12-slim`, non-root USER 10001, layer cache separation, stdlib HEALTHCHECK, 225 MB image size)
+  - `frontend/Dockerfile` (multi-stage minimal asset staging, pinned `nginxinc/nginx-unprivileged:1.27-alpine` on 8080)
+  - `backend/.dockerignore` and `frontend/.dockerignore` (excluding git, env, caches, local tests)
+  - `docker-compose.yml` (single network `loantrack-net`, named volume `loantrack-pgdata`, db healthcheck, `depends_on: { db: { condition: service_healthy } }`, individual file mounts into `/docker-entrypoint-initdb.d/`)
+  - `EVIDENCE.md` compiling real command outputs for Part B
+- **Accepted as-is**:
+  - Docker Compose service dependency ordering and named volume isolation
+- **Modifications / Decisions**:
+  - Resolved and documented Nginx upstream DNS caching issue (Issue 1) when containers restart out of order. Logged root cause and fix in `notes/issues.md`.
