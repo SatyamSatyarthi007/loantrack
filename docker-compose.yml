@@ -1,0 +1,55 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Mount individual SQL files directly into /docker-entrypoint-initdb.d/
+      # Note: PostgreSQL official entrypoint only executes top-level *.sql scripts, not subdirectories
+      - ./db/migrations/001_create_loans.sql:/docker-entrypoint-initdb.d/001_create_loans.sql:ro
+      - ./db/seed/002_seed_loans.sql:/docker-entrypoint-initdb.d/002_seed_loans.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - loantrack-net
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - loantrack-net
+
+  frontend:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - backend
+    networks:
+      - loantrack-net
+
+volumes:
+  pgdata:
+    name: loantrack-pgdata
+
+networks:
+  loantrack-net:
+    name: loantrack-net
+    driver: bridge
