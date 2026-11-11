@@ -69,7 +69,7 @@ def wait_for_db(max_attempts: int = 10) -> bool:
     for attempt in range(1, max_attempts + 1):
         try:
             pool = get_db_pool()
-            with pool.connection() as conn:
+            with pool.connection(timeout=3.0) as conn:
                 with conn.cursor() as cur:
                     cur.execute("SELECT 1;")
             logger.info("Database connection established on attempt %d/%d", attempt, max_attempts)
@@ -91,7 +91,8 @@ def wait_for_db(max_attempts: int = 10) -> bool:
 
 
 # Attempt startup DB connection in background thread so server bind is not blocked
-threading.Thread(target=wait_for_db, daemon=True).start()
+if not os.environ.get("TESTING"):
+    threading.Thread(target=wait_for_db, daemon=True).start()
 
 
 # ------------------------------------------------------------------------------
@@ -114,10 +115,11 @@ def readyz():
     Readiness probe endpoint.
     Verifies that the backend can successfully execute a lightweight query on PostgreSQL.
     Returns 200 when ready to receive client traffic; 503 if the database is unreachable.
+    Uses 2.0s timeout to avoid blocking Kubernetes probe periods.
     """
     try:
         pool = get_db_pool()
-        with pool.connection() as conn:
+        with pool.connection(timeout=2.0) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT 1;")
         return jsonify({"status": "ready"}), 200
@@ -149,7 +151,7 @@ def list_loans():
     """
     try:
         pool = get_db_pool()
-        with pool.connection() as conn:
+        with pool.connection(timeout=3.0) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -219,7 +221,7 @@ def create_loan():
 
     try:
         pool = get_db_pool()
-        with pool.connection() as conn:
+        with pool.connection(timeout=3.0) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
