@@ -3,7 +3,7 @@ import os
 import sys
 import threading
 import time
-from flask import Flask
+from flask import Flask, jsonify
 from psycopg_pool import ConnectionPool
 
 # Configure structured logging
@@ -92,6 +92,42 @@ def wait_for_db(max_attempts: int = 10) -> bool:
 
 # Attempt startup DB connection in background thread so server bind is not blocked
 threading.Thread(target=wait_for_db, daemon=True).start()
+
+
+# ------------------------------------------------------------------------------
+# Health & Readiness Endpoints (Kubernetes Probes)
+# ------------------------------------------------------------------------------
+
+@app.route("/healthz", methods=["GET"])
+def healthz():
+    """
+    Liveness probe endpoint.
+    Verifies that the Flask/gunicorn process is alive and responsive.
+    CRITICAL: Never touches the database, preventing cascading pod restarts during DB outages.
+    """
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/readyz", methods=["GET"])
+def readyz():
+    """
+    Readiness probe endpoint.
+    Verifies that the backend can successfully execute a lightweight query on PostgreSQL.
+    Returns 200 when ready to receive client traffic; 503 if the database is unreachable.
+    """
+    try:
+        pool = get_db_pool()
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1;")
+        return jsonify({"status": "ready"}), 200
+    except Exception as err:
+        logger.warning("Readiness probe check failed: %s", err)
+        return jsonify({
+            "status": "unavailable",
+            "error": "database connection check failed"
+        }), 503
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
