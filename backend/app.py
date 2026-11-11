@@ -3,7 +3,7 @@ import os
 import sys
 import threading
 import time
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from psycopg_pool import ConnectionPool
 
 # Configure structured logging
@@ -127,6 +127,134 @@ def readyz():
             "status": "unavailable",
             "error": "database connection check failed"
         }), 503
+
+
+# ------------------------------------------------------------------------------
+# Business Logic Endpoints: Loans API
+# ------------------------------------------------------------------------------
+
+def get_pod_metadata() -> dict:
+    """Helper to return pod hostname and application version."""
+    return {
+        "served_by": os.environ.get("HOSTNAME", "localhost"),
+        "version": APP_VERSION,
+    }
+
+
+@app.route("/loans", methods=["GET"])
+def list_loans():
+    """
+    List all loans in descending or ascending ID order.
+    Returns array of loans along with serving pod hostname and application version.
+    """
+    try:
+        pool = get_db_pool()
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, borrower_name, loan_amount, property_city, status, created_at
+                    FROM loans
+                    ORDER BY id ASC;
+                    """
+                )
+                rows = cur.fetchall()
+
+        loans = []
+        for row in rows:
+            loans.append({
+                "id": row[0],
+                "borrower_name": row[1],
+                "loan_amount": float(row[2]) if row[2] is not None else 0.0,
+                "property_city": row[3],
+                "status": row[4],
+                "created_at": row[5].isoformat() if row[5] else None,
+            })
+
+        meta = get_pod_metadata()
+        return jsonify({
+            "loans": loans,
+            "served_by": meta["served_by"],
+            "version": meta["version"],
+        }), 200
+
+    except Exception as err:
+        logger.error("Error retrieving loans: %s", err)
+        return jsonify({
+            "error": "Failed to fetch loans from database",
+            "served_by": os.environ.get("HOSTNAME", "localhost"),
+            "version": APP_VERSION,
+        }), 500
+
+
+@app.route("/loans", methods=["POST"])
+def create_loan():
+    """
+    Create a new loan record.
+    Validates payload: borrower_name (required string), loan_amount (required positive float).
+    """
+    data = request.get_json(silent=True)
+    if not data or not isinstance(data, dict):
+        return jsonify({"error": "Invalid or missing JSON payload"}), 400
+
+    borrower_name = str(data.get("borrower_name", "")).strip()
+    if not borrower_name:
+        return jsonify({"error": "Field 'borrower_name' is required"}), 400
+
+    raw_amount = data.get("loan_amount")
+    try:
+        loan_amount = float(raw_amount)
+        if loan_amount <= 0:
+            return jsonify({"error": "Field 'loan_amount' must be greater than zero"}), 400
+    except (TypeError, ValueError):
+        return jsonify({"error": "Field 'loan_amount' must be a valid positive number"}), 400
+
+    property_city = data.get("property_city")
+    if property_city is not None:
+        property_city = str(property_city).strip()
+
+    status = str(data.get("status", "PENDING")).strip().upper()
+    if status not in ("PENDING", "APPROVED", "REJECTED"):
+        status = "PENDING"
+
+    try:
+        pool = get_db_pool()
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO loans (borrower_name, loan_amount, property_city, status)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id, borrower_name, loan_amount, property_city, status, created_at;
+                    """,
+                    (borrower_name, loan_amount, property_city, status),
+                )
+                row = cur.fetchone()
+            conn.commit()
+
+        created = {
+            "id": row[0],
+            "borrower_name": row[1],
+            "loan_amount": float(row[2]),
+            "property_city": row[3],
+            "status": row[4],
+            "created_at": row[5].isoformat() if row[5] else None,
+        }
+
+        meta = get_pod_metadata()
+        return jsonify({
+            "loan": created,
+            "served_by": meta["served_by"],
+            "version": meta["version"],
+        }), 201
+
+    except Exception as err:
+        logger.error("Error creating loan: %s", err)
+        return jsonify({
+            "error": "Failed to create loan in database",
+            "served_by": os.environ.get("HOSTNAME", "localhost"),
+            "version": APP_VERSION,
+        }), 500
 
 
 if __name__ == "__main__":
