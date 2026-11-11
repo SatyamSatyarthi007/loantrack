@@ -6,6 +6,10 @@ services:
       - .env
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Mount individual SQL files directly into /docker-entrypoint-initdb.d/
+      # Note: PostgreSQL official entrypoint only executes top-level *.sql scripts, not subdirectories
+      - ./db/migrations/001_create_loans.sql:/docker-entrypoint-initdb.d/001_create_loans.sql:ro
+      - ./db/seed/002_seed_loans.sql:/docker-entrypoint-initdb.d/002_seed_loans.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
