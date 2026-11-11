@@ -1,0 +1,45 @@
+# Environment variables and secrets (CRITICAL: never commit real secrets)
+.env
+*.env
+!.env.example
+!*.example.yaml
+k8s/secret.yaml
+k8s/*secret*.yaml
+!k8s/11-secret.example.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Node / Frontend dependencies
+node_modules/
+
+# Logs
+*.log
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor & OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Local database runtime data
+pgdata/
