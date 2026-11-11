@@ -31,3 +31,27 @@ This log tracks real issues encountered during development, debugging, and verif
   Flushed Nginx's cached IP by restarting the frontend service (`docker compose restart frontend`). Noted that in Kubernetes (Phase 3), the `backend` Service provides an immutable virtual ClusterIP that prevents DNS drift regardless of pod lifecycle.
 - **Verification**:
   `curl.exe -i http://localhost:8080/api/readyz` returned `HTTP/1.1 200 OK` with `{"status":"ready"}`.
+
+---
+
+### Issue 2: `minikube docker-env` SSH Agent Error on Windows with Containerd Runtime
+- **Phase**: Phase 3 (Kubernetes Deployment)
+- **Symptom / Exact Error Text**:
+  ```text
+  minikube -p minikube docker-env --shell powershell
+  ! Using the docker-env command with the containerd runtime is a highly experimental feature, please provide feedback or contribute to make it better
+  X Exiting due to SSH_AGENT_START: starting an SSH agent on Windows is not yet supported
+  false exit code 90
+  ```
+- **Commands Executed**:
+  1. `minikube -p minikube docker-env --shell powershell`
+  2. `minikube image --help`
+  3. `minikube image build -t loantrack-backend:v1 ./backend`
+  4. `minikube image build -t loantrack-frontend:v1 ./frontend`
+  5. `minikube image ls | Select-String "loantrack"`
+- **Root Cause**:
+  On Windows when Minikube runs the Docker driver with a `containerd` node runtime, `minikube docker-env` requires an SSH tunnel agent to forward Docker socket traffic, which fails on Windows with `SSH_AGENT_START: starting an SSH agent on Windows is not yet supported`.
+- **Resolution**:
+  Used Minikube's native build CLI `minikube image build -t <image>:<tag> <dir>` to compile and register container images directly into Minikube's containerd image store without needing an external registry or socket redirection.
+- **Verification**:
+  Images verified present via `minikube image ls`, and both Deployments rolled out cleanly with `imagePullPolicy: IfNotPresent` (`deployment "backend" successfully rolled out`, `deployment "frontend" successfully rolled out`).

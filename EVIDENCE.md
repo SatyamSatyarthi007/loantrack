@@ -132,3 +132,109 @@ Output:
 (1 row)
 ```
 *Verification: The volume was deleted, so the added loan is gone and only the 6 seed rows remain.*
+
+---
+
+## Part C: Kubernetes Deployment Evidence (Minikube)
+
+### C1: All Workloads & Services in `loantrack` Namespace
+Command:
+```powershell
+kubectl get all -n loantrack
+```
+Output:
+```text
+NAME                            READY   STATUS    RESTARTS   AGE
+pod/backend-c664ccb4c-fln5p     1/1     Running   0          45s
+pod/backend-c664ccb4c-w4ksn     1/1     Running   0          52s
+pod/db-0                        1/1     Running   0          65s
+pod/frontend-5fc98c545c-bvbvl   1/1     Running   0          25s
+pod/frontend-5fc98c545c-zdxhg   1/1     Running   0          31s
+
+NAME               TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)          AGE
+service/backend    ClusterIP   10.98.68.49      <none>        8000/TCP         122m
+service/db         ClusterIP   10.98.131.40     <none>        5432/TCP         123m
+service/frontend   NodePort    10.100.162.181   <none>        8080:30080/TCP   122m
+
+NAME                       READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/backend    2/2     2            2           122m
+deployment.apps/frontend   2/2     2            2           122m
+
+NAME                  READY   AGE
+statefulset.apps/db   1/1     65s
+```
+
+### C2: Storage, Config, and Secret Resources
+Command:
+```powershell
+kubectl get pvc,configmap,secret -n loantrack
+```
+Output:
+```text
+NAME                                STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+persistentvolumeclaim/pgdata-db-0   Bound    pvc-aefee691-fadc-43d9-b7a1-c2758570d22c   1Gi        RWO            standard       65s
+
+NAME                         DATA   AGE
+configmap/db-init            2      123m
+configmap/kube-root-ca.crt   1      123m
+configmap/loantrack-config   4      123m
+
+NAME                    TYPE     DATA   AGE
+secret/db-credentials   Opaque   2      74s
+```
+
+### C3: Network Isolation & Service Types (Part D3)
+Command:
+```powershell
+kubectl -n loantrack get svc
+```
+Output:
+```text
+NAME       TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)          AGE
+backend    ClusterIP   10.98.68.49      <none>        8000/TCP         122m
+db         ClusterIP   10.98.131.40     <none>        5432/TCP         123m
+frontend   NodePort    10.100.162.181   <none>        8080:30080/TCP   122m
+```
+*Verification: `db` and `backend` are ClusterIP only (internal cluster networking, zero external attack surface). Only `frontend` exposes a NodePort (30080).*
+
+### C4: Live Cluster Probes & REST API Responses
+Command:
+```powershell
+curl.exe -i http://127.0.0.1:57770/api/healthz
+curl.exe -i http://127.0.0.1:57770/api/readyz
+curl.exe -s http://127.0.0.1:57770/api/loans
+```
+Output:
+```text
+HTTP/1.1 200 OK
+Server: nginx/1.27.5
+Content-Type: application/json
+Content-Length: 16
+
+{"status":"ok"}
+
+HTTP/1.1 200 OK
+Server: nginx/1.27.5
+Content-Type: application/json
+Content-Length: 19
+
+{"status":"ready"}
+
+{"loans":[{"borrower_name":"Alice Johnson","created_at":"2026-11-06T20:58:33.577120+00:00","id":1,"loan_amount":350000.0,"property_city":"Seattle","status":"APPROVED"},{"borrower_name":"Bob Smith","created_at":"2026-11-07T20:58:33.577120+00:00","id":2,"loan_amount":480000.0,"property_city":"Austin","status":"PENDING"},{"borrower_name":"Carlos Rodriguez","created_at":"2026-11-08T20:58:33.577120+00:00","id":3,"loan_amount":275000.0,"property_city":"Denver","status":"APPROVED"},{"borrower_name":"Diana Prince","created_at":"2026-11-09T20:58:33.577120+00:00","id":4,"loan_amount":620000.0,"property_city":"San Francisco","status":"REJECTED"},{"borrower_name":"Ethan Hunt","created_at":"2026-11-10T20:58:33.577120+00:00","id":5,"loan_amount":510000.0,"property_city":"Chicago","status":"PENDING"},{"borrower_name":"Fiona Gallagher","created_at":"2026-11-11T20:58:33.577120+00:00","id":6,"loan_amount":195000.0,"property_city":"Boston","status":"APPROVED"}],"served_by":"backend-c664ccb4c-fln5p","version":"v1"}
+```
+
+### C5: Multi-Pod Load Balancing Verification
+Command:
+```powershell
+1..6 | ForEach-Object { (Invoke-RestMethod -Uri "http://127.0.0.1:57770/api/loans").served_by }
+```
+Output:
+```text
+backend-c664ccb4c-fln5p
+backend-c664ccb4c-w4ksn
+backend-c664ccb4c-w4ksn
+backend-c664ccb4c-w4ksn
+backend-c664ccb4c-w4ksn
+backend-c664ccb4c-fln5p
+```
+*Verification: Requests distribute across both backend pods (`backend-c664ccb4c-fln5p` and `backend-c664ccb4c-w4ksn`) as proven by `served_by` populated via Downward API.*
