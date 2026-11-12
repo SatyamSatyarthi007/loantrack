@@ -264,3 +264,41 @@ backend service IP: 10.98.68.49
 ```
 *Verification: CoreDNS resolves both relative names (`db`) within the `loantrack` namespace search domain and FQDNs (`db.loantrack.svc.cluster.local`) directly to their respective ClusterIP virtual addresses.*
 
+### D2: Horizontal Scaling and 3-Pod Load Balancing
+Commands:
+```bash
+kubectl -n loantrack scale deploy/backend --replicas=3
+kubectl -n loantrack rollout status deploy/backend
+kubectl -n loantrack get pods -l app=backend -o wide
+```
+Output:
+```text
+deployment.apps/backend scaled
+Waiting for deployment "backend" rollout to finish: 2 of 3 updated replicas are available...
+deployment "backend" successfully rolled out
+NAME                      READY   STATUS    RESTARTS   AGE     IP            NODE       NOMINATED NODE   READINESS GATES
+backend-c664ccb4c-fln5p   1/1     Running   0          7h41m   10.244.0.10   minikube   <none>           <none>
+backend-c664ccb4c-hbkkb   1/1     Running   0          6s      10.244.0.13   minikube   <none>           <none>
+backend-c664ccb4c-w4ksn   1/1     Running   0          7h41m   10.244.0.9    minikube   <none>           <none>
+```
+
+Command (10 consecutive requests through frontend reverse proxy):
+```powershell
+1..10 | ForEach-Object { (Invoke-RestMethod -Uri "http://127.0.0.1:50876/api/loans").served_by }
+```
+Output:
+```text
+backend-c664ccb4c-w4ksn
+backend-c664ccb4c-w4ksn
+backend-c664ccb4c-w4ksn
+backend-c664ccb4c-hbkkb
+backend-c664ccb4c-fln5p
+backend-c664ccb4c-w4ksn
+backend-c664ccb4c-w4ksn
+backend-c664ccb4c-fln5p
+backend-c664ccb4c-hbkkb
+backend-c664ccb4c-fln5p
+```
+*Verification: The backend deployment scales dynamically from 2 to 3 replicas without downtime, and incoming HTTP requests distribute across all 3 active backend pods (`backend-c664ccb4c-fln5p`, `backend-c664ccb4c-hbkkb`, and `backend-c664ccb4c-w4ksn`).*
+
+
