@@ -421,5 +421,119 @@ A user mid-rollout experiences 0 dropped connections and 0 HTTP errors due to th
 2. **`maxSurge: 1` + `readinessProbe`**: A new pod is scheduled above replica count (`n + 1`). Traffic is NOT routed to this new pod until its `readinessProbe` (`GET /readyz`, verifying DB `SELECT 1`) passes consecutive health checks.
 3. **`lifecycle.preStop` delay (`sleep 5`)**: When an old pod is marked for termination, Kubernetes initiates endpoint dereference and `SIGTERM` concurrently. The `preStop` hook introduces a 5-second buffer allowing CoreDNS and kube-proxy iptables rules to complete IP removal before Gunicorn stops accepting connections, completely preventing `502 Bad Gateway` / `Connection reset` race conditions.
 
+### D4: Pod Self-Healing & StatefulSet Storage Persistence
+
+#### Backend Pod Deletion & Immediate Self-Healing
+Command:
+```bash
+# Get current backend pods
+kubectl -n loantrack get pods -l app=backend
+
+# Delete one backend pod
+kubectl -n loantrack delete pod backend-6ddd66467-h2h8x
+
+# Inspect pod list immediately after deletion
+kubectl -n loantrack get pods -l app=backend
+kubectl -n loantrack wait --for=condition=ready pod -l app=backend --timeout=30s
+kubectl -n loantrack get pods -l app=backend
+```
+Output:
+```text
+NAME                      READY   STATUS    RESTARTS   AGE
+backend-6ddd66467-h2h8x   1/1     Running   0          79s
+backend-6ddd66467-vfxb2   1/1     Running   0          85s
+
+pod "backend-6ddd66467-h2h8x" deleted from loantrack namespace
+
+NAME                      READY   STATUS    RESTARTS   AGE
+backend-6ddd66467-vfxb2   1/1     Running   0          96s
+backend-6ddd66467-vvlv9   1/1     Running   0          6s
+
+pod/backend-6ddd66467-vfxb2 condition met
+pod/backend-6ddd66467-vvlv9 condition met
+
+NAME                      READY   STATUS    RESTARTS   AGE
+backend-6ddd66467-vfxb2   1/1     Running   0          107s
+backend-6ddd66467-vvlv9   1/1     Running   0          17s
+```
+*Verification: Kubernetes ReplicaSet controller detected the pod deletion and instantly scheduled a replacement pod (`backend-6ddd66467-vvlv9`), maintaining the desired replica count of 2.*
+
+#### StatefulSet Pod Deletion & Data Persistence Verification
+Command (originate loan #7 via HTTP API before deleting the database pod):
+```powershell
+$body = @{
+    borrower_name = "Grace Hopper"
+    loan_amount = 750000.00
+    property_city = "New York"
+    status = "APPROVED"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://127.0.0.1:50876/api/loans" -Method Post -ContentType "application/json" -Body $body
+```
+Output:
+```json
+{
+  "loan": {
+    "borrower_name": "Grace Hopper",
+    "created_at": "2026-11-12T04:47:30.422011+00:00",
+    "id": 7,
+    "loan_amount": 750000.0,
+    "property_city": "New York",
+    "status": "APPROVED"
+  },
+  "served_by": "backend-6ddd66467-vvlv9",
+  "version": "v1"
+}
+```
+
+Command (delete StatefulSet pod `db-0` and await recreation):
+```bash
+kubectl -n loantrack delete pod db-0
+kubectl -n loantrack get pods -l app=db
+kubectl -n loantrack wait --for=condition=ready pod/db-0 --timeout=60s
+kubectl -n loantrack get pods -l app=db
+```
+Output:
+```text
+pod "db-0" deleted from loantrack namespace
+NAME   READY   STATUS              RESTARTS   AGE
+db-0   0/1     ContainerCreating   0          0s
+
+pod/db-0 condition met
+NAME   READY   STATUS    RESTARTS   AGE
+db-0   1/1     Running   0          10s
+```
+
+Command (verify data survived pod recreation via psql and REST API):
+```bash
+kubectl -n loantrack exec db-0 -- psql -U loantrack_user -d loantrack -c "SELECT count(*) FROM loans;"
+```
+Output:
+```text
+ count 
+-------
+     7
+(1 row)
+```
+
+Querying all loans via frontend reverse proxy:
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:50876/api/loans" | Select-Object -ExpandProperty loans | Select-Object id, borrower_name, loan_amount, property_city, status | Format-Table -AutoSize
+```
+Output:
+```text
+id borrower_name    loan_amount property_city status  
+-- -------------    ----------- ------------- ------  
+ 1 Alice Johnson       350000.0 Seattle       APPROVED
+ 2 Bob Smith           480000.0 Austin        PENDING 
+ 3 Carlos Rodriguez    275000.0 Denver        APPROVED
+ 4 Diana Prince        620000.0 San Francisco REJECTED
+ 5 Ethan Hunt          510000.0 Chicago       PENDING 
+ 6 Fiona Gallagher     195000.0 Boston        APPROVED
+ 7 Grace Hopper        750000.0 New York      APPROVED
+```
+*Verification: StatefulSet `volumeClaimTemplates` binds the PersistentVolumeClaim `loantrack-pgdata-db-0` independently of the pod lifecycle. When `db-0` was deleted, the underlying PVC was reattached to the newly scheduled pod, preserving all data (including newly originated loan #7).*
+
+
 
 
