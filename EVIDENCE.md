@@ -4,6 +4,39 @@ This document captures verbatim terminal commands and real runtime outputs colle
 
 ---
 
+## Part A: Application & Database Baseline Evidence
+
+### A1: Backend Unit Test Suite Execution
+Command:
+```powershell
+python -m unittest backend/test_app.py
+```
+Output:
+```text
+2026-11-12 11:23:45,424 [WARNING] [31928] loantrack-backend: db not ready, attempt 1/10, retrying in 1s: POSTGRES_PASSWORD environment variable is required and must not be empty
+.2026-11-12 11:23:45,462 [ERROR] [31928] loantrack-backend: Error retrieving loans: POSTGRES_PASSWORD environment variable is required and must not be empty
+...2026-11-12 11:23:45,463 [WARNING] [31928] loantrack-backend: Readiness probe check failed: POSTGRES_PASSWORD environment variable is required and must not be empty
+.
+----------------------------------------------------------------------
+Ran 5 tests in 0.038s
+
+OK
+```
+*Verification: All 5 test cases passed, verifying `/healthz` (always 200), `/readyz` (checks DB and returns 503 on failure), `/loans` GET & POST error boundaries, and connection retry exponential backoff logic.*
+
+### A2: Hard Rule 1 Verification (Frontend Isolation from Database)
+Command:
+```bash
+git grep -in "postgres\|password\|5432" frontend/
+```
+Output:
+```text
+(no matches found, exit code 1)
+```
+*Verification: The entire `frontend/` directory contains 0 matches for PostgreSQL drivers, connection strings, ports, or credentials. Hard Rule 1 is strictly satisfied.*
+
+---
+
 ## Part B: Docker & Local Compose Evidence
 
 ### B1: Compose Stack Health & Status
