@@ -301,4 +301,125 @@ backend-c664ccb4c-fln5p
 ```
 *Verification: The backend deployment scales dynamically from 2 to 3 replicas without downtime, and incoming HTTP requests distribute across all 3 active backend pods (`backend-c664ccb4c-fln5p`, `backend-c664ccb4c-hbkkb`, and `backend-c664ccb4c-w4ksn`).*
 
+### D3: Zero-Downtime Rolling Update & Rollback
+
+#### Rolling Update to v2
+Command:
+```bash
+# Build v2 image with APP_VERSION=v2 and load into minikube
+docker build -t loantrack-backend:v2 --build-arg APP_VERSION=v2 ./backend
+minikube image load loantrack-backend:v2
+
+# Trigger rolling update
+kubectl -n loantrack set image deploy/backend backend=loantrack-backend:v2
+```
+
+Loop querying the service endpoint during the rolling update:
+```powershell
+for ($i = 0; $i -lt 35; $i++) {
+    try {
+        $res = Invoke-RestMethod -Uri "http://127.0.0.1:50876/api/loans" -TimeoutSec 2
+        Write-Host "[$((Get-Date).ToString('HH:mm:ss'))] HTTP 200 - version: $($res.version), pod: $($res.served_by)"
+    } catch {
+        Write-Host "[$((Get-Date).ToString('HH:mm:ss'))] ERROR: $($_.Exception.Message)"
+    }
+    Start-Sleep -Milliseconds 600
+}
+kubectl -n loantrack rollout status deploy/backend
+```
+Output:
+```text
+deployment.apps/backend image updated
+[10.14.50] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.14.51] HTTP 200 - version: v1, pod: backend-6ddd66467-fm996
+[10.14.51] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.14.52] HTTP 200 - version: v1, pod: backend-6ddd66467-fm996
+[10.14.53] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.14.53] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.14.54] HTTP 200 - version: v1, pod: backend-6ddd66467-fm996
+[10.14.55] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.14.55] HTTP 200 - version: v1, pod: backend-6ddd66467-fm996
+[10.14.56] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.14.57] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.14.57] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.14.58] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.14.58] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.14.59] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.15.00] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.00] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.15.01] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.02] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.15.02] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.03] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.03] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.04] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.05] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.05] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.06] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.07] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.07] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.08] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.09] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.09] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.10] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.11] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.11] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.12] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+deployment "backend" successfully rolled out
+```
+
+#### Rollback to v1
+Command:
+```bash
+kubectl -n loantrack rollout undo deploy/backend
+```
+
+Loop querying the service endpoint during the rollback:
+```text
+deployment.apps/backend rolled back
+[10.15.28] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.29] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.30] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.30] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.31] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.32] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.32] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.33] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.33] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.34] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.35] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.35] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.36] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.37] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.37] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.38] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.38] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.39] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.40] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.40] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.41] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.42] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.42] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.43] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.44] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.44] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.45] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.45] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.46] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.47] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.47] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.48] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.49] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.49] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.50] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+deployment "backend" successfully rolled out
+```
+
+#### Why Zero Downtime Occurred (SRE Architectural Analysis)
+A user mid-rollout experiences 0 dropped connections and 0 HTTP errors due to the interplay of three mechanisms:
+1. **`maxUnavailable: 0`**: Ensures Kubernetes does not terminate any active pod until replacement pods are ready. Old pods remain in the Service endpoints handling existing and incoming traffic.
+2. **`maxSurge: 1` + `readinessProbe`**: A new pod is scheduled above replica count (`n + 1`). Traffic is NOT routed to this new pod until its `readinessProbe` (`GET /readyz`, verifying DB `SELECT 1`) passes consecutive health checks.
+3. **`lifecycle.preStop` delay (`sleep 5`)**: When an old pod is marked for termination, Kubernetes initiates endpoint dereference and `SIGTERM` concurrently. The `preStop` hook introduces a 5-second buffer allowing CoreDNS and kube-proxy iptables rules to complete IP removal before Gunicorn stops accepting connections, completely preventing `502 Bad Gateway` / `Connection reset` race conditions.
+
+
 

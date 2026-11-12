@@ -97,3 +97,10 @@ spec:
             periodSeconds: 5
             failureThreshold: 2
             timeoutSeconds: 3
+          # Graceful shutdown lifecycle hook:
+          # Introduces a 5s delay before SIGTERM so EndpointSlice/kube-proxy can remove the pod
+          # from Service routing tables before the app stops listening, preventing 502 Bad Gateway during rolling updates.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
