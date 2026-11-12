@@ -11,4 +11,3 @@ data:
   DB_HOST: "db"
   DB_PORT: "5432"
   POSTGRES_DB: "loantrack"
-  APP_VERSION: "v1"
