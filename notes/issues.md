@@ -103,3 +103,25 @@ This log tracks real issues encountered during development, debugging, and verif
 - **Verification**:
   Continuous polling during rolling update to v2 (35 consecutive requests) and rollback to v1 (35 consecutive requests) produced 100% `HTTP 200` responses with 0 failed requests and 0 dropped connections.
 
+---
+
+### Issue 5: CRLF Line Endings in Shell Script on Windows Causing Bash Syntax Warnings
+- **Phase**: Phase 5 (Deploy Script Automation)
+- **Symptom / Exact Error Text**:
+  ```text
+  warning: in the working copy of 'scripts/deploy.sh', LF will be replaced by CRLF the next time Git touches it
+  ```
+- **Commands Executed**:
+  1. `git add scripts/deploy.sh Makefile`
+  2. Enforced LF line endings via PowerShell stream normalization:
+     `[System.IO.File]::WriteAllText($path, $content.Replace("`r`n", "`n"), (New-Object System.Text.UTF8Encoding($false)))`
+  3. Set executable permission in git index: `git update-index --chmod=+x scripts/deploy.sh`
+  4. Executed script via Git Bash: `& "C:\Program Files\Git\bin\bash.exe" scripts/deploy.sh`
+- **Root Cause**:
+  Windows file systems and default git checkout behaviors convert Unix LF newlines to DOS CRLF (`\r\n`). When bash interprets a script with CRLF newlines, carriage returns are read as literal command identifiers (`\r: command not found`).
+- **Resolution**:
+  Normalized file encodings to pure UTF-8 without BOM and LF line endings. Set git executable metadata flag (`--chmod=+x`).
+- **Verification**:
+  Both passes of `scripts/deploy.sh` executed cleanly in Git Bash with exit code 0.
+
+
