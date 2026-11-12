@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: loantrack
+  labels:
+    app.kubernetes.io/name: loantrack
+    app.kubernetes.io/part-of: loantrack
