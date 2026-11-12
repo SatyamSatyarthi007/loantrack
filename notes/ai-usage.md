@@ -72,3 +72,19 @@ This document records the exact pair-engineering collaboration between the human
   - `minikube image build` does not support `--build-arg`: Built `loantrack-backend:v2` with Docker Desktop daemon and transferred it via `minikube image load`. Documented as Issue 3 in `notes/issues.md`.
   - Discovered transient 502 Bad Gateway during rolling update due to race condition between Kubelet SIGTERM and kube-proxy iptables teardown. Introduced `lifecycle.preStop.exec.command: ["/bin/sh", "-c", "sleep 5"]` in backend deployment, achieving 100% zero downtime (0 failed requests across 35 requests during both rollout and rollback). Documented as Issue 4 in `notes/issues.md`.
 
+## Phase 5: Deployment Script & Automation (`feature/deploy-script`)
+- **Generated**:
+  - `scripts/deploy.sh`:
+    - Strict `set -euo pipefail` bash script automating preflight checks, image building & loading, namespace creation, declarative secret generation, and dependency-ordered manifest application.
+    - Uses client-side dry-run creation (`--dry-run=client -o yaml | kubectl apply -f -`) for `db-credentials` Secret and `db-init` ConfigMap to eliminate hardcoded secret files while retaining idempotency.
+    - Rollout status gates for StatefulSet and Deployments before moving to dependent tiers.
+  - Root `Makefile`:
+    - Self-documenting targets: `help`, `deploy`, `up`, `down`, `clean`, `test-idempotency`.
+  - Appended Part E evidence to `EVIDENCE.md` capturing cold-start deployment and secondary idempotency pass.
+- **Accepted as-is**:
+  - Declarative dry-run piping pattern for Kubernetes Secret and ConfigMap creation.
+  - Rollout status gate ordering matching service dependencies.
+- **Modifications / Decisions**:
+  - Script tested under cold start from zero state (`kubectl delete namespace loantrack`) to verify automated end-to-end recovery, followed by immediate second execution to prove complete idempotency. Documented CRLF newline handling as Issue 5 in `notes/issues.md`.
+
+

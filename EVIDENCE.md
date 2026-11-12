@@ -534,6 +534,138 @@ id borrower_name    loan_amount property_city status
 ```
 *Verification: StatefulSet `volumeClaimTemplates` binds the PersistentVolumeClaim `loantrack-pgdata-db-0` independently of the pod lifecycle. When `db-0` was deleted, the underlying PVC was reattached to the newly scheduled pod, preserving all data (including newly originated loan #7).*
 
+---
+
+## Part E: Deployment Automation & Idempotency Evidence
+
+### E1: Cold-Start Deployment from Zero State (`scripts/deploy.sh`)
+Command (executing deployment pipeline against clean cluster after `kubectl delete namespace loantrack`):
+```bash
+bash scripts/deploy.sh
+```
+Output:
+```text
+============================================================
+ Starting LoanTrack Deployment Pipeline
+ Working directory: /c/Users/satyam/Desktop/loantrack
+============================================================
+==> Step 1: Checking Minikube status...
+    Minikube is running and healthy.
+==> Step 2: Packaging container images...
+    Packaging loantrack-backend:v1 from ./backend...
+    Loading loantrack-backend:v1 into Minikube image store...
+    Packaging loantrack-frontend:v1 from ./frontend...
+    Loading loantrack-frontend:v1 into Minikube image store...
+==> Step 3: Ensuring namespace 'loantrack' exists...
+namespace/loantrack created
+==> Step 4: Provisioning Secret and ConfigMap...
+    Loading database credentials from local .env...
+secret/db-credentials created
+configmap/db-init created
+==> Step 5: Applying manifests in dependency order...
+    [1/4] Applying ConfigMap (k8s/10-configmap.yaml)...
+configmap/loantrack-config created
+    [2/4] Applying PostgreSQL StatefulSet (k8s/20-postgres.yaml)...
+service/db created
+statefulset.apps/db created
+    Waiting for PostgreSQL StatefulSet rollout...
+Waiting for 1 pods to be ready...
+partitioned roll out complete: 1 new pods have been updated...
+    [3/4] Applying Backend Deployment (k8s/30-backend.yaml)...
+service/backend created
+deployment.apps/backend created
+    Waiting for Backend Deployment rollout...
+Waiting for deployment "backend" rollout to finish: 0 of 2 updated replicas are available...
+Waiting for deployment "backend" rollout to finish: 1 of 2 updated replicas are available...
+deployment "backend" successfully rolled out
+    [4/4] Applying Frontend Deployment (k8s/40-frontend.yaml)...
+service/frontend created
+deployment.apps/frontend created
+    Waiting for Frontend Deployment rollout...
+Waiting for deployment "frontend" rollout to finish: 0 of 2 updated replicas are available...
+Waiting for deployment "frontend" rollout to finish: 1 of 2 updated replicas are available...
+deployment "frontend" successfully rolled out
+============================================================
+ LoanTrack Deployment Finished Successfully!
+============================================================
+Cluster Node IP: 192.168.49.2
+Frontend NodePort: 30080
+Direct NodePort URL: http://192.168.49.2:30080
+
+Note: If using Docker driver on Windows/macOS, access via minikube tunnel or run:
+      minikube service frontend -n loantrack --url
+============================================================
+```
+
+### E2: Secondary Deployment Pass Proving Script Idempotency
+Command (re-running deployment pipeline immediately with zero changes):
+```bash
+bash scripts/deploy.sh
+```
+Output:
+```text
+============================================================
+ Starting LoanTrack Deployment Pipeline
+ Working directory: /c/Users/satyam/Desktop/loantrack
+============================================================
+==> Step 1: Checking Minikube status...
+    Minikube is running and healthy.
+==> Step 2: Packaging container images...
+    Packaging loantrack-backend:v1 from ./backend...
+    Loading loantrack-backend:v1 into Minikube image store...
+    Packaging loantrack-frontend:v1 from ./frontend...
+    Loading loantrack-frontend:v1 into Minikube image store...
+==> Step 3: Ensuring namespace 'loantrack' exists...
+namespace/loantrack unchanged
+==> Step 4: Provisioning Secret and ConfigMap...
+    Loading database credentials from local .env...
+secret/db-credentials unchanged
+configmap/db-init unchanged
+==> Step 5: Applying manifests in dependency order...
+    [1/4] Applying ConfigMap (k8s/10-configmap.yaml)...
+configmap/loantrack-config unchanged
+    [2/4] Applying PostgreSQL StatefulSet (k8s/20-postgres.yaml)...
+service/db unchanged
+statefulset.apps/db configured
+    Waiting for PostgreSQL StatefulSet rollout...
+partitioned roll out complete: 1 new pods have been updated...
+    [3/4] Applying Backend Deployment (k8s/30-backend.yaml)...
+service/backend unchanged
+deployment.apps/backend unchanged
+    Waiting for Backend Deployment rollout...
+deployment "backend" successfully rolled out
+    [4/4] Applying Frontend Deployment (k8s/40-frontend.yaml)...
+service/frontend unchanged
+deployment.apps/frontend unchanged
+    Waiting for Frontend Deployment rollout...
+deployment "frontend" successfully rolled out
+============================================================
+ LoanTrack Deployment Finished Successfully!
+============================================================
+Cluster Node IP: 192.168.49.2
+Frontend NodePort: 30080
+Direct NodePort URL: http://192.168.49.2:30080
+
+Note: If using Docker driver on Windows/macOS, access via minikube tunnel or run:
+      minikube service frontend -n loantrack --url
+============================================================
+```
+*Verification: Every resource reported `unchanged` or cleanly `configured`. No errors occurred, no duplicate resources were created, and the script completed idempotently.*
+
+### E3: End-to-End Application Verification from Newly Deployed Cluster
+Command:
+```bash
+kubectl -n loantrack exec deploy/frontend -- wget -qO- http://127.0.0.1:8080/api/readyz
+kubectl -n loantrack exec deploy/frontend -- wget -qO- http://127.0.0.1:8080/api/loans
+```
+Output:
+```json
+{"status":"ready"}
+{"loans":[{"borrower_name":"Alice Johnson","created_at":"2026-11-07T05:07:11.466672+00:00","id":1,"loan_amount":350000.0,"property_city":"Seattle","status":"APPROVED"},{"borrower_name":"Bob Smith","created_at":"2026-11-08T05:07:11.466672+00:00","id":2,"loan_amount":480000.0,"property_city":"Austin","status":"PENDING"},{"borrower_name":"Carlos Rodriguez","created_at":"2026-11-09T05:07:11.466672+00:00","id":3,"loan_amount":275000.0,"property_city":"Denver","status":"APPROVED"},{"borrower_name":"Diana Prince","created_at":"2026-11-10T05:07:11.466672+00:00","id":4,"loan_amount":620000.0,"property_city":"San Francisco","status":"REJECTED"},{"borrower_name":"Ethan Hunt","created_at":"2026-11-11T05:07:11.466672+00:00","id":5,"loan_amount":510000.0,"property_city":"Chicago","status":"PENDING"},{"borrower_name":"Fiona Gallagher","created_at":"2026-11-12T05:07:11.466672+00:00","id":6,"loan_amount":195000.0,"property_city":"Boston","status":"APPROVED"}],"served_by":"backend-6ddd66467-j4w9h","version":"v1"}
+```
+*Verification: Cold-start deployment script automatically mounted init SQL scripts into PostgreSQL, bringing all 6 initial loans into ready state without manual human intervention.*
+
+
 
 
 
