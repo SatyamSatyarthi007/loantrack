@@ -41,3 +41,18 @@ This document records the exact pair-engineering collaboration between the human
   - Docker Compose service dependency ordering and named volume isolation
 - **Modifications / Decisions**:
   - Resolved and documented Nginx upstream DNS caching issue (Issue 1) when containers restart out of order. Logged root cause and fix in `notes/issues.md`.
+
+## Phase 3: Kubernetes Deployment on Minikube (`feature/k8s`)
+- **Generated**:
+  - `k8s/00-namespace.yaml` (`loantrack` namespace with standard labels)
+  - `k8s/10-configmap.yaml` (non-sensitive parameters: `DB_HOST`, `DB_PORT`, `POSTGRES_DB`, `APP_VERSION`)
+  - `k8s/11-secret.example.yaml` (template with dummy credentials)
+  - `k8s/20-postgres.yaml` (StatefulSet + ClusterIP service, 1Gi volumeClaimTemplates, `PGDATA` subpath, `pg_isready` probes, resource requests/limits)
+  - `k8s/30-backend.yaml` (Deployment with 2 replicas, ClusterIP service, Downward API `HOSTNAME`, liveness/readiness probes, RollingUpdate maxUnavailable: 0 / maxSurge: 1, `runAsNonRoot: true`, resource requests/limits)
+  - `k8s/40-frontend.yaml` (Deployment with 2 replicas, NodePort 30080 service, RollingUpdate strategy, liveness/readiness probes, `runAsNonRoot: true`, resource requests/limits)
+  - Appended Part C live Kubernetes deployment and load-balancing evidence to `EVIDENCE.md`
+- **Accepted as-is**:
+  - StatefulSet volume claim template and PGDATA subpath pattern
+  - Downward API `metadata.name` injection pattern for pod identity verification
+- **Modifications / Decisions**:
+  - Encountered Windows containerd limitation with `minikube docker-env` (SSH agent failure); switched to `minikube image build` to build images directly into Minikube's image store without requiring an external container registry. Logged as Issue 2 in `notes/issues.md`.

@@ -1,0 +1,99 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: loantrack
+  labels:
+    app.kubernetes.io/name: loantrack
+    app.kubernetes.io/component: backend
+    app: backend
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http
+  selector:
+    app: backend
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: loantrack
+  labels:
+    app.kubernetes.io/name: loantrack
+    app.kubernetes.io/component: backend
+    app: backend
+spec:
+  replicas: 2
+  # Zero-downtime rolling update strategy:
+  # maxUnavailable: 0 ensures all current replicas stay online during update
+  # maxSurge: 1 creates one new pod at a time and waits for readiness probe before terminating old pods
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+        app.kubernetes.io/name: loantrack
+        app.kubernetes.io/component: backend
+    spec:
+      securityContext:
+        # Enforces that all containers run as non-root (Docker image sets numeric UID 10001)
+        runAsNonRoot: true
+      containers:
+        - name: backend
+          image: loantrack-backend:v1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            # Non-sensitive app config (DB_HOST, DB_PORT, POSTGRES_DB, APP_VERSION)
+            - configMapRef:
+                name: loantrack-config
+            # Credentials (POSTGRES_USER, POSTGRES_PASSWORD)
+            - secretRef:
+                name: db-credentials
+          env:
+            # Downward API: Injects the dynamic Kubernetes Pod Name as HOSTNAME
+            # Used by backend to return 'served_by' in responses, proving load balancing across replicas
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          # Liveness probe verifies process health ONLY.
+          # CRITICAL SRE RULE: Never depend on DB; prevents cascading pod restarts during DB outages.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 3
+          # Readiness probe checks DB connectivity (/readyz runs SELECT 1).
+          # Gates Service routing: pod only receives client traffic once DB is reachable.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 2
+            timeoutSeconds: 3

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loantrack-config
+  namespace: loantrack
+  labels:
+    app.kubernetes.io/name: loantrack
+    app.kubernetes.io/component: config
+data:
+  # Non-sensitive configuration parameters (12-Factor App design)
+  DB_HOST: "db"
+  DB_PORT: "5432"
+  POSTGRES_DB: "loantrack"
+  APP_VERSION: "v1"
