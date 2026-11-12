@@ -238,3 +238,29 @@ backend-c664ccb4c-w4ksn
 backend-c664ccb4c-fln5p
 ```
 *Verification: Requests distribute across both backend pods (`backend-c664ccb4c-fln5p` and `backend-c664ccb4c-w4ksn`) as proven by `served_by` populated via Downward API.*
+
+---
+
+## Part D: Kubernetes Operational Evidence (Day-2)
+
+### D1: In-Cluster CoreDNS Name Resolution
+Command (resolving database service by short name and fully qualified domain name `db.loantrack.svc.cluster.local` from a backend pod):
+```bash
+kubectl -n loantrack exec deploy/backend -- python -c "import socket; print('Short hostname (db):', socket.gethostbyname('db')); print('FQDN (db.loantrack.svc.cluster.local):', socket.getaddrinfo('db.loantrack.svc.cluster.local', 5432)[0][4])"
+```
+Output:
+```text
+Short hostname (db): 10.98.131.40
+FQDN (db.loantrack.svc.cluster.local): ('10.98.131.40', 5432)
+```
+
+Command (resolving backend service from within the namespace):
+```bash
+kubectl -n loantrack exec deploy/backend -- python -c "import socket; print('backend service IP:', socket.gethostbyname('backend'))"
+```
+Output:
+```text
+backend service IP: 10.98.68.49
+```
+*Verification: CoreDNS resolves both relative names (`db`) within the `loantrack` namespace search domain and FQDNs (`db.loantrack.svc.cluster.local`) directly to their respective ClusterIP virtual addresses.*
+
