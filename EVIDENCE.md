@@ -238,3 +238,302 @@ backend-c664ccb4c-w4ksn
 backend-c664ccb4c-fln5p
 ```
 *Verification: Requests distribute across both backend pods (`backend-c664ccb4c-fln5p` and `backend-c664ccb4c-w4ksn`) as proven by `served_by` populated via Downward API.*
+
+---
+
+## Part D: Kubernetes Operational Evidence (Day-2)
+
+### D1: In-Cluster CoreDNS Name Resolution
+Command (resolving database service by short name and fully qualified domain name `db.loantrack.svc.cluster.local` from a backend pod):
+```bash
+kubectl -n loantrack exec deploy/backend -- python -c "import socket; print('Short hostname (db):', socket.gethostbyname('db')); print('FQDN (db.loantrack.svc.cluster.local):', socket.getaddrinfo('db.loantrack.svc.cluster.local', 5432)[0][4])"
+```
+Output:
+```text
+Short hostname (db): 10.98.131.40
+FQDN (db.loantrack.svc.cluster.local): ('10.98.131.40', 5432)
+```
+
+Command (resolving backend service from within the namespace):
+```bash
+kubectl -n loantrack exec deploy/backend -- python -c "import socket; print('backend service IP:', socket.gethostbyname('backend'))"
+```
+Output:
+```text
+backend service IP: 10.98.68.49
+```
+*Verification: CoreDNS resolves both relative names (`db`) within the `loantrack` namespace search domain and FQDNs (`db.loantrack.svc.cluster.local`) directly to their respective ClusterIP virtual addresses.*
+
+### D2: Horizontal Scaling and 3-Pod Load Balancing
+Commands:
+```bash
+kubectl -n loantrack scale deploy/backend --replicas=3
+kubectl -n loantrack rollout status deploy/backend
+kubectl -n loantrack get pods -l app=backend -o wide
+```
+Output:
+```text
+deployment.apps/backend scaled
+Waiting for deployment "backend" rollout to finish: 2 of 3 updated replicas are available...
+deployment "backend" successfully rolled out
+NAME                      READY   STATUS    RESTARTS   AGE     IP            NODE       NOMINATED NODE   READINESS GATES
+backend-c664ccb4c-fln5p   1/1     Running   0          7h41m   10.244.0.10   minikube   <none>           <none>
+backend-c664ccb4c-hbkkb   1/1     Running   0          6s      10.244.0.13   minikube   <none>           <none>
+backend-c664ccb4c-w4ksn   1/1     Running   0          7h41m   10.244.0.9    minikube   <none>           <none>
+```
+
+Command (10 consecutive requests through frontend reverse proxy):
+```powershell
+1..10 | ForEach-Object { (Invoke-RestMethod -Uri "http://127.0.0.1:50876/api/loans").served_by }
+```
+Output:
+```text
+backend-c664ccb4c-w4ksn
+backend-c664ccb4c-w4ksn
+backend-c664ccb4c-w4ksn
+backend-c664ccb4c-hbkkb
+backend-c664ccb4c-fln5p
+backend-c664ccb4c-w4ksn
+backend-c664ccb4c-w4ksn
+backend-c664ccb4c-fln5p
+backend-c664ccb4c-hbkkb
+backend-c664ccb4c-fln5p
+```
+*Verification: The backend deployment scales dynamically from 2 to 3 replicas without downtime, and incoming HTTP requests distribute across all 3 active backend pods (`backend-c664ccb4c-fln5p`, `backend-c664ccb4c-hbkkb`, and `backend-c664ccb4c-w4ksn`).*
+
+### D3: Zero-Downtime Rolling Update & Rollback
+
+#### Rolling Update to v2
+Command:
+```bash
+# Build v2 image with APP_VERSION=v2 and load into minikube
+docker build -t loantrack-backend:v2 --build-arg APP_VERSION=v2 ./backend
+minikube image load loantrack-backend:v2
+
+# Trigger rolling update
+kubectl -n loantrack set image deploy/backend backend=loantrack-backend:v2
+```
+
+Loop querying the service endpoint during the rolling update:
+```powershell
+for ($i = 0; $i -lt 35; $i++) {
+    try {
+        $res = Invoke-RestMethod -Uri "http://127.0.0.1:50876/api/loans" -TimeoutSec 2
+        Write-Host "[$((Get-Date).ToString('HH:mm:ss'))] HTTP 200 - version: $($res.version), pod: $($res.served_by)"
+    } catch {
+        Write-Host "[$((Get-Date).ToString('HH:mm:ss'))] ERROR: $($_.Exception.Message)"
+    }
+    Start-Sleep -Milliseconds 600
+}
+kubectl -n loantrack rollout status deploy/backend
+```
+Output:
+```text
+deployment.apps/backend image updated
+[10.14.50] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.14.51] HTTP 200 - version: v1, pod: backend-6ddd66467-fm996
+[10.14.51] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.14.52] HTTP 200 - version: v1, pod: backend-6ddd66467-fm996
+[10.14.53] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.14.53] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.14.54] HTTP 200 - version: v1, pod: backend-6ddd66467-fm996
+[10.14.55] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.14.55] HTTP 200 - version: v1, pod: backend-6ddd66467-fm996
+[10.14.56] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.14.57] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.14.57] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.14.58] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.14.58] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.14.59] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.15.00] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.00] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.15.01] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.02] HTTP 200 - version: v1, pod: backend-6ddd66467-wtwgt
+[10.15.02] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.03] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.03] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.04] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.05] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.05] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.06] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.07] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.07] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.08] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.09] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.09] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.10] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.11] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.11] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.12] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+deployment "backend" successfully rolled out
+```
+
+#### Rollback to v1
+Command:
+```bash
+kubectl -n loantrack rollout undo deploy/backend
+```
+
+Loop querying the service endpoint during the rollback:
+```text
+deployment.apps/backend rolled back
+[10.15.28] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.29] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.30] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.30] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.31] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.32] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.32] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.33] HTTP 200 - version: v2, pod: backend-7d54c9f988-fncxf
+[10.15.33] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.34] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.35] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.35] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.36] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.37] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.37] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.38] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.38] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.39] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.40] HTTP 200 - version: v2, pod: backend-7d54c9f988-9bgdz
+[10.15.40] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.41] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.42] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.42] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.43] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.44] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.44] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.45] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.45] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.46] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.47] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.47] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.48] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.49] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+[10.15.49] HTTP 200 - version: v1, pod: backend-6ddd66467-h2h8x
+[10.15.50] HTTP 200 - version: v1, pod: backend-6ddd66467-vfxb2
+deployment "backend" successfully rolled out
+```
+
+#### Why Zero Downtime Occurred (SRE Architectural Analysis)
+A user mid-rollout experiences 0 dropped connections and 0 HTTP errors due to the interplay of three mechanisms:
+1. **`maxUnavailable: 0`**: Ensures Kubernetes does not terminate any active pod until replacement pods are ready. Old pods remain in the Service endpoints handling existing and incoming traffic.
+2. **`maxSurge: 1` + `readinessProbe`**: A new pod is scheduled above replica count (`n + 1`). Traffic is NOT routed to this new pod until its `readinessProbe` (`GET /readyz`, verifying DB `SELECT 1`) passes consecutive health checks.
+3. **`lifecycle.preStop` delay (`sleep 5`)**: When an old pod is marked for termination, Kubernetes initiates endpoint dereference and `SIGTERM` concurrently. The `preStop` hook introduces a 5-second buffer allowing CoreDNS and kube-proxy iptables rules to complete IP removal before Gunicorn stops accepting connections, completely preventing `502 Bad Gateway` / `Connection reset` race conditions.
+
+### D4: Pod Self-Healing & StatefulSet Storage Persistence
+
+#### Backend Pod Deletion & Immediate Self-Healing
+Command:
+```bash
+# Get current backend pods
+kubectl -n loantrack get pods -l app=backend
+
+# Delete one backend pod
+kubectl -n loantrack delete pod backend-6ddd66467-h2h8x
+
+# Inspect pod list immediately after deletion
+kubectl -n loantrack get pods -l app=backend
+kubectl -n loantrack wait --for=condition=ready pod -l app=backend --timeout=30s
+kubectl -n loantrack get pods -l app=backend
+```
+Output:
+```text
+NAME                      READY   STATUS    RESTARTS   AGE
+backend-6ddd66467-h2h8x   1/1     Running   0          79s
+backend-6ddd66467-vfxb2   1/1     Running   0          85s
+
+pod "backend-6ddd66467-h2h8x" deleted from loantrack namespace
+
+NAME                      READY   STATUS    RESTARTS   AGE
+backend-6ddd66467-vfxb2   1/1     Running   0          96s
+backend-6ddd66467-vvlv9   1/1     Running   0          6s
+
+pod/backend-6ddd66467-vfxb2 condition met
+pod/backend-6ddd66467-vvlv9 condition met
+
+NAME                      READY   STATUS    RESTARTS   AGE
+backend-6ddd66467-vfxb2   1/1     Running   0          107s
+backend-6ddd66467-vvlv9   1/1     Running   0          17s
+```
+*Verification: Kubernetes ReplicaSet controller detected the pod deletion and instantly scheduled a replacement pod (`backend-6ddd66467-vvlv9`), maintaining the desired replica count of 2.*
+
+#### StatefulSet Pod Deletion & Data Persistence Verification
+Command (originate loan #7 via HTTP API before deleting the database pod):
+```powershell
+$body = @{
+    borrower_name = "Grace Hopper"
+    loan_amount = 750000.00
+    property_city = "New York"
+    status = "APPROVED"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://127.0.0.1:50876/api/loans" -Method Post -ContentType "application/json" -Body $body
+```
+Output:
+```json
+{
+  "loan": {
+    "borrower_name": "Grace Hopper",
+    "created_at": "2026-11-12T04:47:30.422011+00:00",
+    "id": 7,
+    "loan_amount": 750000.0,
+    "property_city": "New York",
+    "status": "APPROVED"
+  },
+  "served_by": "backend-6ddd66467-vvlv9",
+  "version": "v1"
+}
+```
+
+Command (delete StatefulSet pod `db-0` and await recreation):
+```bash
+kubectl -n loantrack delete pod db-0
+kubectl -n loantrack get pods -l app=db
+kubectl -n loantrack wait --for=condition=ready pod/db-0 --timeout=60s
+kubectl -n loantrack get pods -l app=db
+```
+Output:
+```text
+pod "db-0" deleted from loantrack namespace
+NAME   READY   STATUS              RESTARTS   AGE
+db-0   0/1     ContainerCreating   0          0s
+
+pod/db-0 condition met
+NAME   READY   STATUS    RESTARTS   AGE
+db-0   1/1     Running   0          10s
+```
+
+Command (verify data survived pod recreation via psql and REST API):
+```bash
+kubectl -n loantrack exec db-0 -- psql -U loantrack_user -d loantrack -c "SELECT count(*) FROM loans;"
+```
+Output:
+```text
+ count 
+-------
+     7
+(1 row)
+```
+
+Querying all loans via frontend reverse proxy:
+```powershell
+Invoke-RestMethod -Uri "http://127.0.0.1:50876/api/loans" | Select-Object -ExpandProperty loans | Select-Object id, borrower_name, loan_amount, property_city, status | Format-Table -AutoSize
+```
+Output:
+```text
+id borrower_name    loan_amount property_city status  
+-- -------------    ----------- ------------- ------  
+ 1 Alice Johnson       350000.0 Seattle       APPROVED
+ 2 Bob Smith           480000.0 Austin        PENDING 
+ 3 Carlos Rodriguez    275000.0 Denver        APPROVED
+ 4 Diana Prince        620000.0 San Francisco REJECTED
+ 5 Ethan Hunt          510000.0 Chicago       PENDING 
+ 6 Fiona Gallagher     195000.0 Boston        APPROVED
+ 7 Grace Hopper        750000.0 New York      APPROVED
+```
+*Verification: StatefulSet `volumeClaimTemplates` binds the PersistentVolumeClaim `loantrack-pgdata-db-0` independently of the pod lifecycle. When `db-0` was deleted, the underlying PVC was reattached to the newly scheduled pod, preserving all data (including newly originated loan #7).*
+
+
+
+

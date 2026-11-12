@@ -56,3 +56,19 @@ This document records the exact pair-engineering collaboration between the human
   - Downward API `metadata.name` injection pattern for pod identity verification
 - **Modifications / Decisions**:
   - Encountered Windows containerd limitation with `minikube docker-env` (SSH agent failure); switched to `minikube image build` to build images directly into Minikube's image store without requiring an external container registry. Logged as Issue 2 in `notes/issues.md`.
+
+## Phase 4: Kubernetes Operations & Day-2 Management (`feature/k8s-ops`)
+- **Generated**:
+  - Appended Part D operational evidence to `EVIDENCE.md`:
+    - D1: CoreDNS verification (short name `db` and FQDN `db.loantrack.svc.cluster.local` resolution from backend pod).
+    - D2: Horizontal scaling of backend to 3 replicas with 10-request load-balancing distribution across all 3 pods.
+    - D3: Zero-downtime rolling update to `loantrack-backend:v2` and rollback to `v1` with SRE architectural analysis.
+    - D4: Pod self-healing verification (backend pod deletion) and StatefulSet persistence verification (originate loan #7, delete `db-0`, verify data intact upon restart).
+  - Updated `k8s/30-backend.yaml` with graceful shutdown lifecycle hook (`preStop: sleep 5`).
+  - Updated `k8s/10-configmap.yaml` to decouple `APP_VERSION` from ConfigMap so versioning is immutably governed by container image tags.
+- **Accepted as-is**:
+  - SRE diagnostic methodology: testing under continuous load, capturing real Nginx log entries, and applying standard Kubernetes connection draining hooks.
+- **Modifications / Decisions**:
+  - `minikube image build` does not support `--build-arg`: Built `loantrack-backend:v2` with Docker Desktop daemon and transferred it via `minikube image load`. Documented as Issue 3 in `notes/issues.md`.
+  - Discovered transient 502 Bad Gateway during rolling update due to race condition between Kubelet SIGTERM and kube-proxy iptables teardown. Introduced `lifecycle.preStop.exec.command: ["/bin/sh", "-c", "sleep 5"]` in backend deployment, achieving 100% zero downtime (0 failed requests across 35 requests during both rollout and rollback). Documented as Issue 4 in `notes/issues.md`.
+
